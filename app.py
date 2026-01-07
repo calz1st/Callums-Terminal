@@ -89,7 +89,7 @@ def get_market_data(tickers_dict):
                     change = ((latest - open_p) / open_p) * 100
                     data[name] = (latest, change)
                 else:
-                    # Fallback if 1m data fails (common for indices)
+                    # Fallback if 1m data fails
                     hist_long = ticker.history(period="2d")
                     if not hist_long.empty:
                         latest = hist_long['Close'].iloc[-1]
@@ -107,12 +107,8 @@ def get_market_data(tickers_dict):
 def get_symbol_details(key):
     """Auto-detects icon and formatting based on asset name."""
     key_upper = key.upper()
-    
-    # Defaults
     icon = "📈"
-    fmt = "{:.2f}"
     
-    # Icons
     if "BTC" in key_upper: icon = "₿"
     elif "ETH" in key_upper: icon = "Ξ"
     elif "EUR" in key_upper: icon = "💶"
@@ -138,7 +134,6 @@ def render_ticker_bar(data):
         color = "pos" if change >= 0 else "neg"
         arrow = "▲" if change >= 0 else "▼"
         
-        # Smart formatting
         if price > 1000: price_str = f"${price:,.0f}"
         elif price < 1.5: price_str = f"{price:.4f}"
         else: price_str = f"${price:.2f}"
@@ -188,7 +183,6 @@ def render_chart(symbol):
 
 def render_economic_calendar(timezone_id):
     """Embeds Investing.com Calendar with Dynamic Timezone."""
-    # Maps user choice to Investing.com IDs
     calendar_url = f"https://sslecal2.investing.com?columns=exc_flags,exc_currency,exc_importance,exc_actual,exc_forecast,exc_previous&features=datepicker,timezone&countries=5,4,72,35,25,6,43,12,37&calType=week&timeZone={timezone_id}&lang=1&importance=3"
     html = f"""
     <div style="border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden; height: 800px;">
@@ -225,8 +219,7 @@ def list_available_models(api_key):
 def generate_report(data_dump, mode, api_key, model_choice):
     if not api_key: return "⚠️ Please enter your Google API Key in the sidebar."
     
-    # SAFETY DELAY
-    time.sleep(4)
+    time.sleep(5) # Safety Delay
     
     fallback_chain = [model_choice]
     safe_defaults = ["gemini-2.0-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash"]
@@ -318,7 +311,7 @@ def generate_report(data_dump, mode, api_key, model_choice):
 
     for model in fallback_chain:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-        wait_times = [4, 8]
+        wait_times = [5, 10]
         for wait in wait_times:
             try:
                 r = requests.post(url, headers=headers, json=payload)
@@ -334,20 +327,40 @@ def generate_report(data_dump, mode, api_key, model_choice):
             except Exception:
                 time.sleep(1); continue
                 
-    return "⚠️ System Overloaded: All AI models are busy. Please wait 60 seconds."
+    return "⚠️ System Overloaded: All AI models are busy. Please wait 1 minute."
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
     st.title("💠 Callums Terminal")
-    st.caption("Update v15.9")
+    st.caption("Update v15.12")
     st.markdown("---")
-    api_key = st.text_input("Use API Key to connect to server", type="password")
+    
+    # --- AUTO-LOGIN LOGIC (CRASH PROOF) ---
+    api_key = None
+    try:
+        # We try to get the secret. If the file is missing, it jumps to 'except'
+        if "GOOGLE_API_KEY" in st.secrets:
+            api_key = st.secrets["GOOGLE_API_KEY"]
+            st.success("🔑 Key Loaded Securely")
+        else:
+            api_key = st.text_input("Use API Key to connect to server", type="password")
+    except FileNotFoundError:
+        # If the file is missing on local PC, just show the box
+        api_key = st.text_input("Use API Key to connect to server", type="password")
+    except Exception:
+        # Catch-all for any other secret errors
+        api_key = st.text_input("Use API Key to connect to server", type="password")
     
     st.markdown("---")
     st.subheader("⚙️ Settings")
     
     # 1. TIMEZONE SELECTOR
-    tz_map = {"London (GMT)": 15, "New York (EST)": 8, "Tokyo (JST)": 18, "UTC": 1}
+    tz_map = {
+        "London (GMT)": 15, 
+        "London (Alt)": 42, 
+        "New York (EST)": 8, 
+        "Tokyo (JST)": 18
+    }
     selected_tz = st.selectbox("Calendar Timezone:", list(tz_map.keys()), index=0)
     tz_id = tz_map[selected_tz]
     
