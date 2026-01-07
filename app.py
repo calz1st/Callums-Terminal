@@ -25,12 +25,6 @@ st.markdown("""
         h1, h2, h3 { color: #111827 !important; font-weight: 600; letter-spacing: -0.5px; }
         p, div, li { color: #374151; font-size: 15px; line-height: 1.6; }
         
-        /* Metric Cards */
-        div[data-testid="stMetricValue"] {
-            font-size: 28px; color: #111827; font-family: 'JetBrains Mono', monospace; font-weight: 700;
-        }
-        div[data-testid="stMetricDelta"] { font-size: 14px; font-weight: 500; }
-
         /* Report Cards */
         .terminal-card {
             background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px;
@@ -43,19 +37,71 @@ st.markdown("""
             border-radius: 6px; padding: 12px 24px; font-weight: 500; width: 100%;
         }
         .stButton>button:hover { background-color: #333333; }
+
+        /* SCROLLABLE TICKER CSS */
+        .ticker-wrap {
+            display: flex;
+            overflow-x: auto;
+            gap: 15px;
+            padding: 10px 0px;
+            scrollbar-width: none; /* Firefox */
+            -ms-overflow-style: none;  /* IE 10+ */
+            white-space: nowrap;
+        }
+        .ticker-wrap::-webkit-scrollbar { 
+            display: none; /* Chrome/Safari */
+        }
+        .ticker-item {
+            min-width: 150px;
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #E5E7EB;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            display: flex;
+            flex-direction: column;
+        }
+        .t-label { font-size: 12px; color: #6B7280; font-weight: 600; margin-bottom: 5px;}
+        .t-val { font-size: 18px; font-weight: 700; font-family: 'JetBrains Mono'; color: #111827; }
+        .t-delta { font-size: 12px; font-weight: 500; margin-top: 2px; }
+        .pos { color: #059669; }
+        .neg { color: #DC2626; }
     </style>
 """, unsafe_allow_html=True)
 
 # --- 3. HELPER FUNCTIONS ---
 
-def get_market_data():
-    """Fetches real-time prices."""
+def get_market_data(category):
+    """Fetches real-time prices based on selected category."""
     try:
         data = {}
-        tickers = {"BTC": "BTC-USD", "EUR": "EURUSD=X", "USD": "DX-Y.NYB", "GOLD": "GC=F", "OIL": "CL=F"}
+        
+        # DEFINING THE MARKET BASKETS
+        market_map = {
+            "Standard": {
+                "BTC": "BTC-USD", "EUR": "EURUSD=X", "USD": "DX-Y.NYB", "GOLD": "GC=F", "OIL": "CL=F"
+            },
+            "Crypto": {
+                "BTC": "BTC-USD", "ETH": "ETH-USD", "SOL": "SOL-USD", "XRP": "XRP-USD", "DOGE": "DOGE-USD"
+            },
+            "Forex": {
+                "EUR": "EURUSD=X", "GBP": "GBPUSD=X", "JPY": "JPY=X", "CHF": "CHF=X", "CAD": "CAD=X"
+            },
+            "Tech Stocks": {
+                "NVDA": "NVDA", "TSLA": "TSLA", "AAPL": "AAPL", "MSFT": "MSFT", "GOOG": "GOOG"
+            },
+            "Indices": {
+                "S&P 500": "^GSPC", "NASDAQ": "^IXIC", "DOW": "^DJI", "VIX": "^VIX", "FTSE": "^FTSE"
+            }
+        }
+        
+        tickers = market_map.get(category, market_map["Standard"])
+        
         for name, symbol in tickers.items():
             ticker = yf.Ticker(symbol)
+            # Fast fetch for 1 day history
             hist = ticker.history(period="1d", interval="1m")
+            
             if not hist.empty:
                 latest = hist['Close'].iloc[-1]
                 open_p = hist['Open'].iloc[0]
@@ -65,6 +111,39 @@ def get_market_data():
                 data[name] = (0.0, 0.0)
         return data
     except: return None
+
+def render_ticker_bar(data):
+    """Generates the horizontal scrollable HTML bar."""
+    if not data: return
+    
+    html_content = '<div class="ticker-wrap">'
+    
+    # Generic icon mapping fallback
+    icon_map = {
+        "BTC": "₿", "ETH": "Ξ", "SOL": "◎", "EUR": "💶", "GBP": "💷", 
+        "USD": "💵", "GOLD": "⚱️", "OIL": "🛢️", "NVDA": "🤖", "TSLA": "🚗",
+        "S&P 500": "🇺🇸", "VIX": "📉"
+    }
+    
+    for key, (price, change) in data.items():
+        color = "pos" if change >= 0 else "neg"
+        arrow = "▲" if change >= 0 else "▼"
+        
+        # Smart formatting based on asset price (e.g. BTC vs Forex)
+        if price > 1000:
+            price_str = f"${price:,.0f}"
+        elif price < 2: 
+            price_str = f"{price:.4f}"
+        else:
+            price_str = f"${price:.2f}"
+            
+        icon = icon_map.get(key, "📈")
+        
+        card = f'<div class="ticker-item"><span class="t-label">{icon} {key}</span><span class="t-val">{price_str}</span><span class="t-delta {color}">{arrow} {change:.2f}%</span></div>'
+        html_content += card
+            
+    html_content += '</div>'
+    st.markdown(html_content, unsafe_allow_html=True)
 
 def get_crypto_fng():
     try: return int(requests.get("https://api.alternative.me/fng/?limit=1").json()['data'][0]['value'])
@@ -153,24 +232,14 @@ def generate_report(data_dump, mode, api_key, model_choice):
     if not api_key: return "⚠️ Please enter your Google API Key in the sidebar."
     
     # --- WATERFALL STRATEGY ---
-    # Attempt user choice first, then fallback to safer models if 429/503 occurs
     fallback_chain = [model_choice]
     safe_defaults = ["gemini-2.0-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash"]
-    
     for m in safe_defaults:
-        if m not in fallback_chain:
-            fallback_chain.append(m)
+        if m not in fallback_chain: fallback_chain.append(m)
 
     headers = {'Content-Type': 'application/json'}
-    
-    safety_settings = [
-        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
-        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
-        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_ONLY_HIGH"},
-        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"}
-    ]
+    safety_settings = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"}]
 
-    # --- PROMPT LOGIC ---
     if mode == "BTC":
         prompt_text = f"""
         ROLE: Senior Hedge Fund Analyst.
@@ -277,45 +346,31 @@ def generate_report(data_dump, mode, api_key, model_choice):
         "safetySettings": safety_settings
     }
     
-    # 4. ROBUST RETRY LOOP (Waterfall)
+    # 4. ROBUST RETRY LOOP
     for model in fallback_chain:
-        # Use User Selected Model directly
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-        
-        # Exponential backoff within the loop
-        wait_times = [4, 8] # Wait 4s, then 8s
+        wait_times = [4, 8]
         for wait in wait_times:
             try:
                 r = requests.post(url, headers=headers, json=payload)
                 response_json = r.json()
-                
-                # SUCCESS
                 if 'candidates' in response_json and len(response_json['candidates']) > 0:
                     return response_json['candidates'][0]['content']['parts'][0]['text'].replace("$","USD ")
-                
-                # ERROR CHECKING
                 if 'error' in response_json:
                     code = response_json['error'].get('code', 0)
-                    
-                    # 429 = Rate Limit, 503 = Overloaded
                     if code == 429 or code == 503:
-                        time.sleep(wait) # Wait and retry same model
+                        time.sleep(wait)
                         continue
-                    
-                    # 404 = Model Not Found (Try next model in chain)
-                    if code == 404:
-                        break 
-                
+                    if code == 404: break 
             except Exception:
-                time.sleep(1)
-                continue
+                time.sleep(1); continue
                 
-    return "⚠️ System Overloaded: All AI models are currently busy or rate-limited. Please wait 60 seconds and try again."
+    return "⚠️ System Overloaded: All AI models are busy. Please wait 60 seconds."
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
-    st.title("💠 Callums Terminals")
-    st.caption("Update v14.1")
+    st.title("💠 Callums Terminal")
+    st.caption("Update v15.6")
     st.markdown("---")
     api_key = st.text_input("Use API Key to connect to server", type="password")
     
@@ -323,7 +378,6 @@ with st.sidebar:
     st.subheader("⚙️ Model Selector")
     st.info("⚠️ Note: Terminal will auto-connect to most capable server")
     
-    # AUTO-DISCOVERY LOGIC
     available_models = []
     if api_key:
         if 'valid_models' not in st.session_state:
@@ -335,21 +389,16 @@ with st.sidebar:
         
         available_models = st.session_state.get('valid_models', [])
 
-    # If found, show them.
     if available_models:
         model_options = available_models
-        # SMART DEFAULT: Prioritize 2.0-Flash (Stable) over 2.5 (Rate Limited)
         default_index = 0
         for i, m in enumerate(model_options):
-            # We look for "2.0-flash" but NOT "exp" if possible, to find the most stable one
             if "gemini-2.0-flash" in m and "exp" not in m:
                 default_index = i
                 break
-            # Fallback to 2.0-flash-exp if stable isn't found
             elif "gemini-2.0-flash-exp" in m:
                 default_index = i
     else:
-        # Fallback list if scan fails
         model_options = ["gemini-2.0-flash", "gemini-2.0-flash-exp", "gemini-2.5-flash"]
         default_index = 0
 
@@ -362,15 +411,17 @@ with st.sidebar:
 st.title("TERMINAL DASHBOARD 🖥️")
 st.markdown("---")
 
-# LIVE TICKERS
-market = get_market_data()
+# MARKET SELECTOR DROPDOWN (Dynamic Tickers)
+selected_market = st.selectbox(
+    "Select Market View:", 
+    ["Standard", "Crypto", "Forex", "Tech Stocks", "Indices"],
+    index=0
+)
+
+# LIVE TICKERS (FIXED LAYOUT)
+market = get_market_data(selected_market)
 if market:
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("₿ BTC / USD", f"${market['BTC'][0]:,.0f}", f"{market['BTC'][1]:.2f}%")
-    c2.metric("💶 EUR / USD", f"{market['EUR'][0]:.4f}", f"{market['EUR'][1]:.2f}%")
-    c3.metric("💵 DXY Index", f"{market['USD'][0]:.2f}", f"{market['USD'][1]:.2f}%")
-    c4.metric("⚱️ Gold (XAU)", f"${market['GOLD'][0]:,.0f}", f"{market['GOLD'][1]:.2f}%")
-    c5.metric("🛢️ Crude Oil", f"${market['OIL'][0]:.2f}", f"{market['OIL'][1]:.2f}%")
+    render_ticker_bar(market)
 
 st.markdown("---")
 
