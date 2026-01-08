@@ -251,7 +251,7 @@ def generate_report(data_dump, mode, api_key):
 # --- 6. SIDEBAR ---
 with st.sidebar:
     st.title("💠 Callums Terminal")
-    st.caption("Update v15.38 (Expanded Charts)")
+    st.caption("Update v15.38")
     st.markdown("---")
     
     api_key = None
