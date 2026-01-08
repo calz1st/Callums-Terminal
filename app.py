@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(
-    page_title="QUANTUM | Hedge Fund Terminal",
+    page_title="Callums Terminal",
     page_icon="💠",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -290,8 +290,8 @@ def generate_report(data_dump, mode, api_key):
 
 # --- 6. SIDEBAR ---
 with st.sidebar:
-    st.title("💠 Callums Terminals")
-    st.caption("Update v15.39 (Platinum UI)")
+    st.title("💠 Callums Terminal")
+    st.caption("Update v15.39")
     st.markdown("---")
     
     api_key = None
@@ -308,7 +308,7 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("⚙️ Settings")
-    tz_map = {"London (GMT)": 2, "New York (EST)": 8, "Tokyo (JST)": 18}
+    tz_map = {"London (GMT)": 15, "New York (EST)": 8, "Tokyo (JST)": 18}
     selected_tz = st.selectbox("Timezone:", list(tz_map.keys()), index=0)
     
     st.markdown("---")
