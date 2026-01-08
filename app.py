@@ -266,7 +266,7 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("⚙️ Settings")
-    tz_map = {"London (GMT)": 2, "New York (EST)": 8, "Tokyo (JST)": 18}
+    tz_map = {"London (GMT)": 15, "New York (EST)": 8, "Tokyo (JST)": 18}
     selected_tz = st.selectbox("Timezone:", list(tz_map.keys()), index=0)
     
     st.markdown("---")
