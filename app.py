@@ -39,11 +39,6 @@ st.markdown("""
         }
         .stButton>button:hover { background-color: #333333; }
         
-        /* Status Box */
-        .status-box {
-            padding: 10px; border-radius: 5px; background: #e0e7ff; color: #3730a3; font-family: monospace; font-size: 12px; margin-bottom: 10px;
-        }
-
         /* SCROLLABLE TICKER CSS */
         .ticker-wrap {
             display: flex;
@@ -77,7 +72,7 @@ st.markdown("""
 
 # --- 3. HELPER FUNCTIONS ---
 
-@st.cache_data(ttl=60) # Cache market data for 60 seconds to save API calls
+@st.cache_data(ttl=60)
 def get_market_data(tickers_dict):
     try:
         data = {}
@@ -85,16 +80,13 @@ def get_market_data(tickers_dict):
             if not symbol: continue 
             try:
                 ticker = yf.Ticker(symbol)
-                # Fast fetch
                 hist = ticker.history(period="1d", interval="1m")
-                
                 if not hist.empty:
                     latest = hist['Close'].iloc[-1]
                     open_p = hist['Open'].iloc[0]
                     change = ((latest - open_p) / open_p) * 100
                     data[name] = (latest, change)
                 else:
-                    # Fallback
                     hist_long = ticker.history(period="2d")
                     if not hist_long.empty:
                         latest = hist_long['Close'].iloc[-1]
@@ -140,7 +132,7 @@ def render_ticker_bar(data):
     html_content += '</div>'
     st.markdown(html_content, unsafe_allow_html=True)
 
-@st.cache_data(ttl=300) # Cache Fear/Greed for 5 mins
+@st.cache_data(ttl=300)
 def get_crypto_fng():
     try: return int(requests.get("https://api.alternative.me/fng/?limit=1").json()['data'][0]['value'])
     except: return 50
@@ -187,18 +179,15 @@ def render_economic_calendar(timezone_id):
     components.html(html, height=800)
 
 # --- 4. DATA SOURCES & AI ---
-BTC_SOURCES = ["https://cointelegraph.com/tags/bitcoin", "https://u.today/bitcoin-news"]
-FX_SOURCES = ["https://www.fxstreet.com/news", "https://www.dailyfx.com/market-news"]
-GEO_SOURCES = ["https://oilprice.com/Geopolitics", "https://www.fxstreet.com/news/macroeconomics", "https://www.cnbc.com/world/?region=world"]
-
-@st.cache_data(ttl=600) # Cache news scraping for 10 minutes (HUGE quota saver)
+@st.cache_data(ttl=600) 
 def scrape_site(url, limit):
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         r = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(r.content, 'html.parser')
         texts = [p.get_text() for p in soup.find_all(['h1', 'h2', 'p'])]
-        return f"[[SOURCE: {url}]]\n" + " ".join(texts)[:limit] + "\n\n"
+        # REDUCED TO 500 CHARS TO SAVE TOKEN QUOTA
+        return f"[[SOURCE: {url}]]\n" + " ".join(texts)[:500] + "\n\n"
     except: return ""
 
 def list_real_models(api_key):
@@ -214,20 +203,21 @@ def list_real_models(api_key):
         return valid_models
     except: return []
 
-@st.cache_data(ttl=3600, show_spinner="Analyzing...") # Cache Reports for 1 HOUR
+@st.cache_data(ttl=3600, show_spinner="Analyzing...") 
 def generate_report(data_dump, mode, api_key, model_choice):
     if not api_key: return "⚠️ Please enter your Google API Key in the sidebar."
     
     clean_key = api_key.strip()
     
-    # PRIORITY CHAIN: Start with what user wants, then fallback to lighter models
-    # gemini-1.5-flash is usually the most generous with quotas
-    fallback_chain = ["gemini-1.5-flash", "gemini-1.0-pro", "gemini-1.5-pro"]
-    if model_choice not in fallback_chain:
-        fallback_chain.insert(0, model_choice)
-
+    # SINGLE SHOT MODEL (Avoid retry loops to prevent hitting quota)
+    # 8b has double the rate limit of standard flash
+    active_model = "gemini-1.5-flash-8b"
+    
     headers = {'Content-Type': 'application/json'}
     safety_settings = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"}]
+    
+    # REDUCED OUTPUT TOKENS (Answer to 'do we need to lower capabilities?')
+    generation_config = {"maxOutputTokens": 800}
 
     if mode == "BTC":
         prompt = f"""ROLE: Analyst. TASK: Bitcoin technical update. OUTPUT: ### ⚡️ NARRATIVE \n ### 🎯 LEVELS"""
@@ -236,54 +226,53 @@ def generate_report(data_dump, mode, api_key, model_choice):
     else:
         prompt = f"""ROLE: FX Strat. TASK: Major Pairs Outlook. OUTPUT: **💵 DXY** \n ### 🇪🇺 EUR/USD"""
 
-    for model in fallback_chain:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={clean_key}"
-        payload = {"contents": [{"parts": [{"text": prompt}]}], "safetySettings": safety_settings}
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{active_model}:generateContent?key={clean_key}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}], 
+        "safetySettings": safety_settings,
+        "generationConfig": generation_config
+    }
+    
+    # SINGLE ATTEMPT WITH COUNTDOWN
+    try:
+        r = requests.post(url, headers=headers, json=payload)
+        response_json = r.json()
         
-        # RETRY LOOP (The Fix for "Please retry in X seconds")
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                r = requests.post(url, headers=headers, json=payload)
-                response_json = r.json()
+        if 'candidates' in response_json:
+            return response_json['candidates'][0]['content']['parts'][0]['text'].replace("$","USD ")
+        
+        if 'error' in response_json:
+            err_msg = response_json['error'].get('message', '')
+            
+            # CHECK FOR RATE LIMIT & SHOW VISUAL TIMER
+            if response_json['error'].get('code') == 429:
+                wait_match = re.search(r"retry in (\d+\.?\d*)s", err_msg)
+                if wait_match:
+                    wait_seconds = float(wait_match.group(1)) + 1
+                    
+                    # VISUAL COUNTDOWN
+                    placeholder = st.empty()
+                    for i in range(int(wait_seconds), 0, -1):
+                        placeholder.warning(f"⚠️ Quota Limit Hit. Cooling down: {i}s...")
+                        time.sleep(1)
+                    placeholder.empty()
+                    
+                    # One final retry after waiting
+                    r2 = requests.post(url, headers=headers, json=payload)
+                    if 'candidates' in r2.json():
+                        return r2.json()['candidates'][0]['content']['parts'][0]['text']
+            
+            return f"❌ Error: {err_msg}"
                 
-                # Success?
-                if 'candidates' in response_json and len(response_json['candidates']) > 0:
-                    return response_json['candidates'][0]['content']['parts'][0]['text'].replace("$","USD ")
-                
-                # Check for Quota Error
-                if 'error' in response_json:
-                    err_msg = response_json['error'].get('message', '')
-                    
-                    # EXTRACT WAIT TIME FROM ERROR MESSAGE
-                    # Example: "Please retry in 15.26s"
-                    wait_match = re.search(r"retry in (\d+\.?\d*)s", err_msg)
-                    
-                    if wait_match:
-                        wait_seconds = float(wait_match.group(1)) + 1 # Add 1s buffer
-                        st.warning(f"⚠️ Quota hit. Cooling down for {int(wait_seconds)}s...")
-                        time.sleep(wait_seconds)
-                        continue # Retry the same model
-                    
-                    # If 429 but no time given, just wait 5s
-                    if response_json['error'].get('code') == 429:
-                        time.sleep(5)
-                        continue
-                    
-                    # If 404 (Model not found), break inner loop to try next model
-                    if response_json['error'].get('code') == 404:
-                        break 
-                        
-            except Exception:
-                time.sleep(1)
-                continue
-                
-    return "❌ All models exhausted. Please try again in 10 minutes."
+    except Exception as e:
+        return f"System Error: {str(e)}"
+            
+    return "❌ Connection Failed."
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
     st.title("💠 Callums Terminals")
-    st.caption("Update v15.22 (Quota Guard)")
+    st.caption("Update v15.23 (Low Bandwidth)")
     st.markdown("---")
     
     api_key = None
@@ -307,19 +296,9 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("🤖 Model Selector")
     
-    # Auto-Discovery with Safe Fallback
-    if api_key:
-        if 'verified_models' not in st.session_state:
-            with st.spinner("Finding best model..."):
-                found_models = list_real_models(api_key)
-                if found_models:
-                    st.session_state['verified_models'] = found_models
-        
-        model_options = st.session_state.get('verified_models', ["gemini-1.5-flash", "gemini-pro"])
-    else:
-        model_options = ["Enter API Key first"]
-
-    model_choice = st.selectbox("Active AI Engine:", model_options, index=0)
+    # Forced Simplification
+    model_choice = st.selectbox("Active AI Engine:", ["gemini-1.5-flash-8b (High Speed)"], index=0)
+    
     st.markdown("---")
     st.success("● NETWORK: SECURE")
 
@@ -367,12 +346,11 @@ with tab1:
     with col_b:
         st.subheader("Market scan")
         if st.button("GENERATE BTC BRIEFING", type="primary"):
-            # NO STATUS CONTEXT MANAGER to prevent UI lockup during sleep
-            st.info("⏳ Analyzing... (This might take 15s if quota is low)")
-            # Use smart caching wrapper
-            report = generate_report("", "BTC", api_key, model_choice)
+            st.info("⏳ Analyzing... (High-Speed Mode)")
+            # Pass the HARDCODED model
+            report = generate_report("", "BTC", api_key, "gemini-1.5-flash-8b")
             st.session_state['btc_rep'] = report
-            st.rerun() # Refresh to show result
+            st.rerun() 
             
         if 'btc_rep' in st.session_state:
             st.markdown(f'<div class="terminal-card">{st.session_state["btc_rep"]}</div>', unsafe_allow_html=True)
@@ -388,7 +366,7 @@ with tab2:
         st.subheader("Global FX Strategy")
         if st.button("GENERATE MACRO BRIEFING", type="primary"):
             st.info("⏳ Analyzing Markets...")
-            report = generate_report("", "FX", api_key, model_choice)
+            report = generate_report("", "FX", api_key, "gemini-1.5-flash-8b")
             st.session_state['fx_rep'] = report
             st.rerun()
         if 'fx_rep' in st.session_state:
@@ -398,7 +376,7 @@ with tab3:
     st.subheader("Geopolitical Risk Intelligence")
     if st.button("RUN GEOPOLITICAL SCAN", type="primary"):
         st.info("⏳ Scanning...")
-        report = generate_report("", "GEO", api_key, model_choice)
+        report = generate_report("", "GEO", api_key, "gemini-1.5-flash-8b")
         st.session_state['geo_rep'] = report
         st.rerun()
     if 'geo_rep' in st.session_state:
