@@ -367,7 +367,7 @@ view = st.session_state['active_view']
 if view == "Bitcoin":
     col_a, col_b = st.columns([1, 2])
     with col_a:
-        st.markdown("### 😨 Sentiment")
+        st.markdown("### Market Sentiment")
         btc_fng = get_crypto_fng()
         st.markdown(f"<div class='terminal-card' style='text-align: center;'><div class='metric-val'>{btc_fng}</div><div style='font-size: 12px; color: #6B7280;'>Fear & Greed Index</div></div>", unsafe_allow_html=True)
         render_gauge(btc_fng, "")
