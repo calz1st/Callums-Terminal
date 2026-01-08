@@ -242,8 +242,9 @@ def generate_report(data_dump, mode, api_key):
     headers = {'Content-Type': 'application/json'}
     safety_settings = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"}]
     
-    # INCREASED CAPACITY FOR FULL 7-PAIR BREAKDOWN
-    generation_config = {"maxOutputTokens": 3000}
+    # --- ADJUSTED TOKEN LIMIT: 2500 ---
+    # Good balance between depth and speed/quota
+    generation_config = {"maxOutputTokens": 2500}
 
     if mode == "BTC":
         prompt = f"""
@@ -330,7 +331,7 @@ def generate_report(data_dump, mode, api_key):
 # --- 5. SIDEBAR ---
 with st.sidebar:
     st.title("💠 Callums Terminals")
-    st.caption("Update v15.34 (Full FX Desk)")
+    st.caption("Update v15.35 (Optimized FX)")
     st.markdown("---")
     
     api_key = None
