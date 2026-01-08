@@ -37,6 +37,11 @@ st.markdown("""
             border-radius: 6px; padding: 12px 24px; font-weight: 500; width: 100%;
         }
         .stButton>button:hover { background-color: #333333; }
+        
+        /* Status Box */
+        .status-box {
+            padding: 10px; border-radius: 5px; background: #e0e7ff; color: #3730a3; font-family: monospace; font-size: 12px; margin-bottom: 10px;
+        }
 
         /* SCROLLABLE TICKER CSS */
         .ticker-wrap {
@@ -72,7 +77,6 @@ st.markdown("""
 # --- 3. HELPER FUNCTIONS ---
 
 def get_market_data(tickers_dict):
-    """Fetches real-time prices for a dictionary of {Name: Symbol}."""
     try:
         data = {}
         for name, symbol in tickers_dict.items():
@@ -189,36 +193,39 @@ def scrape_site(url, limit):
         return f"[[SOURCE: {url}]]\n" + " ".join(texts)[:limit] + "\n\n"
     except: return ""
 
-def list_available_models(api_key):
-    # This function helps diagnose key issues by asking Google what permissions we have
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+def debug_connection(api_key):
+    """Runs a raw test against Google's API to see exactly what's breaking."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    headers = {'Content-Type': 'application/json'}
+    payload = {"contents": [{"parts": [{"text": "Hello"}]}]}
+    
     try:
-        response = requests.get(url)
-        data = response.json()
-        if 'error' in data: 
-            return [f"Error {data['error']['code']}"] # Return the specific error code
-        
-        valid_models = [m['name'].replace("models/", "") for m in data.get('models', []) if 'generateContent' in m['supportedGenerationMethods']]
-        return valid_models
-    except: return []
+        r = requests.post(url, headers=headers, json=payload)
+        return r.status_code, r.text # Return RAW text from Google
+    except Exception as e:
+        return 0, str(e)
 
 def generate_report(data_dump, mode, api_key, model_choice):
     if not api_key: return "⚠️ Please enter your Google API Key in the sidebar."
     
-    # Clean the key again just in case
+    # Clean the key again
     clean_key = api_key.strip()
     
-    # Model Priority Chain
-    fallback_chain = ["gemini-1.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-pro"]
-    if model_choice not in fallback_chain:
-        fallback_chain.insert(0, model_choice)
+    # Priority Chain: Flash 1.5 is the most robust
+    fallback_chain = ["gemini-1.5-flash", "gemini-1.5-pro-latest"]
 
     headers = {'Content-Type': 'application/json'}
-    safety_settings = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"}]
+    # ULTRA-LOOSE SAFETY SETTINGS
+    safety_settings = [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+    ]
 
-    # Fail-Safe Prompt (No Data)
+    # Minimal Prompts
     if mode == "BTC":
-        prompt = f"""ROLE: Analyst. TASK: Bitcoin technical update. OUTPUT: ### ⚡️ UPDATE (Narrative) \n ### 🎯 LEVELS (Supp/Res)"""
+        prompt = f"""ROLE: Analyst. TASK: Bitcoin technical update. OUTPUT: ### ⚡️ NARRATIVE \n ### 🎯 LEVELS"""
     elif mode == "GEO":
         prompt = f"""ROLE: Risk Analyst. TASK: Geopolitical Risks. OUTPUT: ### ⚠️ THREATS \n ### 🛢 COMMODITIES"""
     else:
@@ -232,52 +239,62 @@ def generate_report(data_dump, mode, api_key, model_choice):
             r = requests.post(url, headers=headers, json=payload)
             response_json = r.json()
             
-            # SUCCESS
-            if 'candidates' in response_json:
-                return response_json['candidates'][0]['content']['parts'][0]['text'].replace("$","USD ")
+            # 1. Success Case
+            if 'candidates' in response_json and len(response_json['candidates']) > 0:
+                # Check for finishReason safety blocks
+                candidate = response_json['candidates'][0]
+                if candidate.get('finishReason') == "SAFETY":
+                    return "⚠️ **Blocked by Safety Filter.** Google thinks this request is dangerous."
+                
+                if 'content' in candidate:
+                    return candidate['content']['parts'][0]['text'].replace("$","USD ")
             
-            # DETAILED ERROR REPORTING
+            # 2. Safety Feedback (Prompt Level)
+            if 'promptFeedback' in response_json:
+                if 'blockReason' in response_json['promptFeedback']:
+                    return f"⚠️ **Blocked:** {response_json['promptFeedback']['blockReason']}"
+
+            # 3. HTTP Error Codes
             if 'error' in response_json:
-                err_code = response_json['error'].get('code')
-                err_msg = response_json['error'].get('message')
-                
-                # If it's a key issue, stop immediately and tell the user
-                if err_code == 400:
-                    return f"❌ **API Key Error:** Google rejected the key. \n\n**Reason:** {err_msg}\n\n*Tip: Check for empty spaces in your secrets.toml file.*"
-                if err_code == 403:
-                    return f"❌ **Permission Error:** Your key doesn't work for model '{model}'. \n\n*Tip: Enable the Gemini API in Google Cloud Console.*"
-                
-                # If busy, try next model
-                if err_code in [429, 503]:
-                    time.sleep(1)
-                    continue
+                err = response_json['error']
+                return f"❌ **Google Error ({err.get('code')}):** {err.get('message')}"
                     
         except Exception as e:
             return f"System Error: {str(e)}"
-                
-    return "❌ Connection Failed. Google Servers are refusing the request."
+            
+    return "❌ Connection Failed. Unknown Response Structure."
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
     st.title("💠 Callums Terminals")
-    st.caption("Update v15.17")
+    st.caption("Update v15.18")
     st.markdown("---")
     
     api_key = None
     try:
-        # Load from secrets
         if "GOOGLE_API_KEY" in st.secrets:
-            raw_key = st.secrets["GOOGLE_API_KEY"]
-            # AUTO-CLEAN: Remove hidden spaces/newlines
-            api_key = raw_key.strip()
-            st.success("🔑 Key Loaded & Cleaned")
+            api_key = st.secrets["GOOGLE_API_KEY"].strip()
+            st.success("🔑 Key Loaded Securely")
         else:
             api_key = st.text_input("Use API Key to connect to server", type="password")
     except Exception:
         api_key = st.text_input("Use API Key to connect to server", type="password")
     
-    # Clean input if manual
     if api_key: api_key = api_key.strip()
+
+    # --- DIAGNOSTIC BUTTON ---
+    if st.button("🔴 TEST CONNECTION", type="secondary"):
+        if not api_key:
+            st.error("No Key Entered")
+        else:
+            with st.spinner("Pinging Google..."):
+                code, raw_resp = debug_connection(api_key)
+                if code == 200:
+                    st.success("✅ Connection Successful!")
+                    st.code(raw_resp[:200] + "...", language="json")
+                else:
+                    st.error(f"❌ Failed (Code {code})")
+                    st.error(raw_resp) # SHOW THE RAW ERROR
     
     st.markdown("---")
     st.subheader("⚙️ Settings")
@@ -285,32 +302,6 @@ with st.sidebar:
     tz_map = {"London (GMT)": 2, "London (Alt)": 42, "New York (EST)": 8, "Tokyo (JST)": 18}
     selected_tz = st.selectbox("Calendar Timezone:", list(tz_map.keys()), index=0)
     
-    st.markdown("---")
-    st.subheader("🤖 Model Selector")
-    
-    # MODEL CHECKER
-    available_models = []
-    if api_key:
-        if 'valid_models' not in st.session_state:
-            with st.spinner("Checking Key Permissions..."):
-                found = list_available_models(api_key)
-                if found and "Error" not in found[0]:
-                    st.session_state['valid_models'] = found
-                    st.success(f"Verified: {len(found)} Models")
-                elif found:
-                    st.error(f"Key Issue: {found[0]}")
-        available_models = st.session_state.get('valid_models', [])
-
-    if available_models:
-        model_options = available_models
-        default_index = 0
-        for i, m in enumerate(model_options):
-            if "gemini-1.5-flash" in m and "8b" not in m: default_index = i; break
-    else:
-        model_options = ["gemini-1.5-flash", "gemini-2.0-flash-exp"]
-        default_index = 0
-
-    model_choice = st.selectbox("Active Model:", model_options, index=default_index)
     st.markdown("---")
     st.success("● NETWORK: SECURE")
 
@@ -359,8 +350,7 @@ with tab1:
         st.subheader("Market scan")
         if st.button("GENERATE BTC BRIEFING", type="primary"):
             with st.status("Accessing Feed...", expanded=True):
-                raw = ""; # Skipped scraping for fail-safe check
-                report = generate_report(raw, "BTC", api_key, model_choice)
+                report = generate_report("", "BTC", api_key, "gemini-1.5-flash")
                 st.session_state['btc_rep'] = report
         if 'btc_rep' in st.session_state:
             st.markdown(f'<div class="terminal-card">{st.session_state["btc_rep"]}</div>', unsafe_allow_html=True)
@@ -376,7 +366,7 @@ with tab2:
         st.subheader("Global FX Strategy")
         if st.button("GENERATE MACRO BRIEFING", type="primary"):
             with st.status("Accessing Feed...", expanded=True):
-                report = generate_report("", "FX", api_key, model_choice)
+                report = generate_report("", "FX", api_key, "gemini-1.5-flash")
                 st.session_state['fx_rep'] = report
         if 'fx_rep' in st.session_state:
             st.markdown(f'<div class="terminal-card">{st.session_state["fx_rep"]}</div>', unsafe_allow_html=True)
@@ -385,7 +375,7 @@ with tab3:
     st.subheader("Geopolitical Risk Intelligence")
     if st.button("RUN GEOPOLITICAL SCAN", type="primary"):
         with st.status("Accessing Feed...", expanded=True):
-            report = generate_report("", "GEO", api_key, model_choice)
+            report = generate_report("", "GEO", api_key, "gemini-1.5-flash")
             st.session_state['geo_rep'] = report
     if 'geo_rep' in st.session_state:
         st.markdown(f'<div class="terminal-card">{st.session_state["geo_rep"]}</div>', unsafe_allow_html=True)
