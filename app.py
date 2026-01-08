@@ -209,16 +209,11 @@ def debug_connection(api_key):
 def generate_report(data_dump, mode, api_key, model_choice):
     if not api_key: return "⚠️ Please enter your Google API Key in the sidebar."
     
-    # Clean the key again
     clean_key = api_key.strip()
     
-    # --- CRITICAL FIX: CHANGED DEFAULT TO 'gemini-pro' ---
-    # This is the "Universal" model that works on all accounts.
-    fallback_chain = ["gemini-pro", "gemini-1.5-flash", "gemini-1.0-pro"]
-    
-    # Insert user choice only if it's different
-    if model_choice not in fallback_chain:
-        fallback_chain.insert(0, model_choice)
+    # --- HARD RESET: Force 'gemini-pro' (1.0) ---
+    # We ignore the model_choice if it's causing issues and default to the most stable one.
+    fallback_chain = ["gemini-pro", "gemini-1.0-pro"] 
 
     headers = {'Content-Type': 'application/json'}
     safety_settings = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"}]
@@ -259,7 +254,7 @@ def generate_report(data_dump, mode, api_key, model_choice):
 # --- 5. SIDEBAR ---
 with st.sidebar:
     st.title("💠 Callums Terminals")
-    st.caption("Update v15.19")
+    st.caption("Update v15.20")
     st.markdown("---")
     
     api_key = None
@@ -292,6 +287,15 @@ with st.sidebar:
     
     tz_map = {"London (GMT)": 2, "London (Alt)": 42, "New York (EST)": 8, "Tokyo (JST)": 18}
     selected_tz = st.selectbox("Calendar Timezone:", list(tz_map.keys()), index=0)
+    
+    st.markdown("---")
+    st.subheader("🤖 Model Selector")
+    
+    # --- HARD RESET: Only show 1.0 models ---
+    model_options = ["gemini-pro"]
+    
+    # RENAMED KEY TO FORCE RESET vvv
+    model_choice = st.selectbox("Active AI Engine:", model_options, index=0)
     
     st.markdown("---")
     st.success("● NETWORK: SECURE")
