@@ -184,20 +184,35 @@ def render_economic_calendar(timezone_id):
     components.html(html, height=800)
 
 # --- 4. DATA SOURCES & AI ---
+# UPDATED SOURCES TO AVOID "ACCESS DENIED"
 BTC_SOURCES = ["https://cointelegraph.com/tags/bitcoin", "https://u.today/bitcoin-news"]
-FX_SOURCES = ["https://www.fxstreet.com/news", "https://www.dailyfx.com/market-news"]
-GEO_SOURCES = ["https://oilprice.com/Geopolitics", "https://www.fxstreet.com/news/macroeconomics", "https://www.cnbc.com/world/?region=world"]
+FX_SOURCES = ["https://www.investing.com/news/forex-news", "https://www.cnbc.com/currencies/"]
+GEO_SOURCES = ["https://oilprice.com/Geopolitics", "https://www.cnbc.com/world/?region=world"]
 
 @st.cache_data(ttl=600) 
 def scrape_site(url, limit):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        r = requests.get(url, headers=headers, timeout=5)
+        # STEALTH MODE: Act like a real Chrome Browser
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://www.google.com/'
+        }
+        r = requests.get(url, headers=headers, timeout=8)
+        
+        if r.status_code != 200:
+            return "" # Silently fail if blocked (Don't show error to user)
+            
         soup = BeautifulSoup(r.content, 'html.parser')
         texts = [p.get_text() for p in soup.find_all(['h1', 'h2', 'p'])]
-        # INCREASED LIMIT TO 1000 CHARS FOR DEEPER CONTEXT
-        return f"[[SOURCE: {url}]]\n" + " ".join(texts)[:1000] + "\n\n"
-    except: return ""
+        
+        # Clean text
+        raw_text = " ".join(texts)
+        raw_text = re.sub(r'\s+', ' ', raw_text).strip()
+        
+        return f"[[SOURCE: {url}]]\n" + raw_text[:1200] + "\n\n"
+    except: 
+        return ""
 
 def resolve_best_model(api_key):
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
@@ -234,10 +249,9 @@ def generate_report(data_dump, mode, api_key):
     headers = {'Content-Type': 'application/json'}
     safety_settings = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"}]
     
-    # MASSIVE TOKEN INCREASE (2500) FOR "LENGTHY" BRIEFS
     generation_config = {"maxOutputTokens": 2500}
 
-    # --- DEEP-DIVE PROMPTS (HIGH DENSITY) ---
+    # DEEP DIVE PROMPTS
     if mode == "BTC":
         prompt = f"""
         ROLE: Senior Institutional Crypto Strategist.
@@ -245,9 +259,8 @@ def generate_report(data_dump, mode, api_key):
         LIVE DATA: {data_dump}
         
         REQUIREMENTS:
-        - Do NOT summarize. Analyze deeply.
-        - Use professional financial terminology (e.g., "Invalidation," "Confluence," "Liquidity Grab").
-        - Provide concrete scenarios.
+        - Use professional financial terminology.
+        - Analyze specific price levels mentioned in the news.
         
         OUTPUT FORMAT (Markdown):
         ### 📊 TECHNICAL DEEP DIVE
@@ -338,7 +351,7 @@ def generate_report(data_dump, mode, api_key):
 # --- 5. SIDEBAR ---
 with st.sidebar:
     st.title("💠 Callums Terminals")
-    st.caption("Update v15.29 (Deep-Dive)")
+    st.caption("Update v15.30 (Stealth Scraper)")
     st.markdown("---")
     
     api_key = None
@@ -421,7 +434,7 @@ with tab1:
             raw_news = ""
             with st.spinner("Acquiring Live Intel..."):
                 for url in BTC_SOURCES:
-                    raw_news += scrape_site(url, 1000)
+                    raw_news += scrape_site(url, 1200)
             
             st.info("⏳ Negotiating with Google AI...")
             report = generate_report(raw_news, "BTC", api_key)
@@ -445,7 +458,7 @@ with tab2:
             raw_news = ""
             with st.spinner("Acquiring Live Intel..."):
                 for url in FX_SOURCES:
-                    raw_news += scrape_site(url, 1000)
+                    raw_news += scrape_site(url, 1200)
             
             st.info("⏳ Negotiating with Google AI...")
             report = generate_report(raw_news, "FX", api_key)
@@ -461,7 +474,7 @@ with tab3:
         raw_news = ""
         with st.spinner("Acquiring Live Intel..."):
             for url in GEO_SOURCES:
-                raw_news += scrape_site(url, 1000)
+                raw_news += scrape_site(url, 1200)
         
         st.info("⏳ Negotiating with Google AI...")
         report = generate_report(raw_news, "GEO", api_key)
