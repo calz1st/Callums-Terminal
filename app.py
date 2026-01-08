@@ -195,7 +195,8 @@ def scrape_site(url, limit):
         r = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(r.content, 'html.parser')
         texts = [p.get_text() for p in soup.find_all(['h1', 'h2', 'p'])]
-        return f"[[SOURCE: {url}]]\n" + " ".join(texts)[:500] + "\n\n"
+        # INCREASED LIMIT TO 1000 CHARS FOR DEEPER CONTEXT
+        return f"[[SOURCE: {url}]]\n" + " ".join(texts)[:1000] + "\n\n"
     except: return ""
 
 def resolve_best_model(api_key):
@@ -232,58 +233,81 @@ def generate_report(data_dump, mode, api_key):
     
     headers = {'Content-Type': 'application/json'}
     safety_settings = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"}]
-    generation_config = {"maxOutputTokens": 1200}
+    
+    # MASSIVE TOKEN INCREASE (2500) FOR "LENGTHY" BRIEFS
+    generation_config = {"maxOutputTokens": 2500}
 
-    # PROMPT WITH LIVE DATA INJECTION
+    # --- DEEP-DIVE PROMPTS (HIGH DENSITY) ---
     if mode == "BTC":
         prompt = f"""
-        ROLE: Institutional Crypto Strategist.
-        TASK: Write a comprehensive Bitcoin briefing using the LIVE DATA provided.
-        LIVE NEWS DATA: {data_dump}
+        ROLE: Senior Institutional Crypto Strategist.
+        TASK: Produce a highly detailed, multi-paragraph research note on Bitcoin using LIVE DATA.
+        LIVE DATA: {data_dump}
+        
+        REQUIREMENTS:
+        - Do NOT summarize. Analyze deeply.
+        - Use professional financial terminology (e.g., "Invalidation," "Confluence," "Liquidity Grab").
+        - Provide concrete scenarios.
+        
         OUTPUT FORMAT (Markdown):
-        ### ⚡️ LIVE MARKET STRUCTURE
-        (Analyze Current Price Action based on provided news)
-        ### 🏦 INSTITUTIONAL FLOWS
-        (ETF Inflows/Outflows & Sentiment)
-        ### 🔮 SCENARIO PLANNING
-        (Bull/Bear Levels)
+        ### 📊 TECHNICAL DEEP DIVE
+        (Analyze the Daily & Weekly Market Structure. Discuss EMAs, RSI divergence, and Volume profiles.)
+        
+        ### 🐋 ON-CHAIN & FUNDAMENTAL FLOWS
+        (Discuss ETF inflows/outflows, Miner behavior, and Whale wallet activity derived from news.)
+        
+        ### 🌍 MACRO CORRELATIONS
+        (Correlate BTC PA with DXY, S&P 500, and Global Liquidity cycles.)
+        
+        ### 🎯 STRATEGIC TRADE PLAN
+        - **Bull Case:** (Condition + Target)
+        - **Bear Case:** (Condition + Target)
+        - **Invalidation Level:** (Specific Price)
         """
     elif mode == "GEO":
         prompt = f"""
         ROLE: Geopolitical Risk Strategist.
-        TASK: Analyze global threats using the LIVE DATA provided.
-        LIVE NEWS DATA: {data_dump}
+        TASK: Comprehensive threat assessment report based on LIVE DATA.
+        LIVE DATA: {data_dump}
+        
         OUTPUT FORMAT (Markdown):
-        ### 🌍 EXECUTIVE SUMMARY
-        (High-level threat assessment)
-        ### ⚔️ REGIONAL FLASHPOINTS
-        (Middle East/Europe tensions from news)
-        ### 🛡 MARKET IMPLICATIONS
-        (Impact on Commodities/Safe Havens)
+        ### 🚨 GLOBAL THREAT MATRIX
+        (Detailed paragraph on the current DEFCON-equivalent status of global markets.)
+        
+        ### ⚔️ REGIONAL FLASHPOINTS (DETAILED)
+        (Deep dive into Middle East, Europe, or Asia tensions. Specific military/political moves.)
+        
+        ### 🛢 COMMODITY & SUPPLY CHAIN IMPACT
+        (How these tensions specifically affect Brent Crude, Gold, and Shipping Lanes.)
+        
+        ### 🛡 INVESTMENT IMPLICATIONS
+        (Actionable advice for risk-on vs risk-off asset allocation.)
         """
     else: # FX
         prompt = f"""
-        ROLE: Lead FX Strategist.
-        TASK: Outlook for 7 MAJORS using LIVE DATA.
-        LIVE NEWS DATA: {data_dump}
+        ROLE: Head of FX Strategy.
+        TASK: Detailed breakdown of the 7 Major Pairs using LIVE DATA.
+        LIVE DATA: {data_dump}
+        
         OUTPUT FORMAT (Markdown):
-        **💵 DXY (DOLLAR INDEX)**
-        (Structure & Yield Driver)
+        **💵 US DOLLAR INDEX (DXY) MACRO THESIS**
+        (Analyze Yield Curve Control, Fed Policy expectations, and DXY technicals.)
+        
         ---
         ### 🇪🇺 EUR/USD
-        (Bias / Key Level)
+        * **Structure:** (Bullish/Bearish Market Structure)
+        * **Driver:** (ECB vs Fed divergence)
+        * **Key Levels:** (Support/Resistance)
+        
         ### 🇬🇧 GBP/USD
-        (Bias / Key Level)
+        * **Structure:** (Trend Analysis)
+        * **Driver:** (BoE Policy/UK Inflation)
+        
         ### 🇯🇵 USD/JPY
-        (Bias / Key Level)
-        ### 🇨🇭 USD/CHF
-        (Bias / Key Level)
-        ### 🇦🇺 AUD/USD
-        (Bias / China Proxy)
-        ### 🇨🇦 USD/CAD
-        (Bias / Oil correlation)
-        ### 🇳🇿 NZD/USD
-        (Bias / Key Level)
+        * **Structure:** (YCC & Intervention Risks)
+        * **Driver:** (Carry Trade dynamics)
+        
+        (Repeat format for CHF, AUD, CAD, NZD with specific commodity correlations where applicable.)
         """
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{active_model}:generateContent?key={clean_key}"
@@ -314,7 +338,7 @@ def generate_report(data_dump, mode, api_key):
 # --- 5. SIDEBAR ---
 with st.sidebar:
     st.title("💠 Callums Terminals")
-    st.caption("Update v15.28 (Live-Link)")
+    st.caption("Update v15.29 (Deep-Dive)")
     st.markdown("---")
     
     api_key = None
@@ -397,7 +421,7 @@ with tab1:
             raw_news = ""
             with st.spinner("Acquiring Live Intel..."):
                 for url in BTC_SOURCES:
-                    raw_news += scrape_site(url, 500)
+                    raw_news += scrape_site(url, 1000)
             
             st.info("⏳ Negotiating with Google AI...")
             report = generate_report(raw_news, "BTC", api_key)
@@ -421,7 +445,7 @@ with tab2:
             raw_news = ""
             with st.spinner("Acquiring Live Intel..."):
                 for url in FX_SOURCES:
-                    raw_news += scrape_site(url, 500)
+                    raw_news += scrape_site(url, 1000)
             
             st.info("⏳ Negotiating with Google AI...")
             report = generate_report(raw_news, "FX", api_key)
@@ -437,7 +461,7 @@ with tab3:
         raw_news = ""
         with st.spinner("Acquiring Live Intel..."):
             for url in GEO_SOURCES:
-                raw_news += scrape_site(url, 500)
+                raw_news += scrape_site(url, 1000)
         
         st.info("⏳ Negotiating with Google AI...")
         report = generate_report(raw_news, "GEO", api_key)
