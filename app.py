@@ -2,13 +2,14 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 import time
+import re
 import yfinance as yf
 import streamlit.components.v1 as components
 import plotly.graph_objects as go
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(
-    page_title="Callums Terminal",
+    page_title="QUANTUM | Hedge Fund Terminal",
     page_icon="💠",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -91,6 +92,7 @@ def get_symbol_details(key):
     icon = "📈"
     if "BTC" in key_upper: icon = "₿"
     elif "ETH" in key_upper: icon = "Ξ"
+    elif "XRP" in key_upper: icon = "✕"
     elif "EUR" in key_upper: icon = "💶"
     elif "GBP" in key_upper: icon = "💷"
     elif "USD" in key_upper: icon = "💵"
@@ -110,7 +112,7 @@ def render_ticker_grid(data, asset_map):
 
     # Define TradingView Mapping for Click Action
     tv_map = {
-        "BTC": "COINBASE:BTCUSD", "ETH": "COINBASE:ETHUSD", "SOL": "COINBASE:SOLUSD",
+        "BTC": "COINBASE:BTCUSD", "ETH": "COINBASE:ETHUSD", "SOL": "COINBASE:SOLUSD", "XRP": "COINBASE:XRPUSD",
         "EUR": "FX:EURUSD", "GBP": "FX:GBPUSD", "JPY": "FX:USDJPY", "CHF": "FX:USDCHF",
         "CAD": "FX:USDCAD", "AUD": "FX:AUDUSD", "NZD": "FX:NZDUSD",
         "DXY": "TVC:DXY", "GOLD": "OANDA:XAUUSD", "OIL": "TVC:USOIL",
@@ -249,14 +251,14 @@ def generate_report(data_dump, mode, api_key):
 # --- 6. SIDEBAR ---
 with st.sidebar:
     st.title("💠 Callums Terminals")
-    st.caption("Update v15.37 (Native Click)")
+    st.caption("Update v15.38 (Expanded Charts)")
     st.markdown("---")
     
     api_key = None
     try:
         if "GOOGLE_API_KEY" in st.secrets:
             api_key = st.secrets["GOOGLE_API_KEY"].strip()
-            st.success("🔑 Key Loaded securley")
+            st.success("🔑 Key Loaded")
         else:
             api_key = st.text_input("Use API Key", type="password")
     except:
@@ -266,7 +268,7 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("⚙️ Settings")
-    tz_map = {"London (GMT)": 15, "New York (EST)": 8, "Tokyo (JST)": 18}
+    tz_map = {"London (GMT)": 2, "New York (EST)": 8, "Tokyo (JST)": 18}
     selected_tz = st.selectbox("Timezone:", list(tz_map.keys()), index=0)
     
     st.markdown("---")
@@ -278,7 +280,7 @@ st.markdown("---")
 
 col_sel, col_space = st.columns([1, 2])
 with col_sel:
-    selected_market = st.selectbox("Select Market View:", ["Standard", "Crypto", "Forex", "Tech Stocks", "Indices"], index=0)
+    selected_market = st.selectbox("Select Market View:", ["Standard", "Crypto", "Forex", "Tech Stocks", "Indices", "Custom"], index=0)
 
 market_map = {
     "Standard": {"BTC": "BTC-USD", "EUR": "EURUSD=X", "USD": "DX-Y.NYB", "GOLD": "GC=F", "OIL": "CL=F"},
@@ -365,10 +367,22 @@ elif view == "Calendar":
 
 elif view == "Charts":
     st.subheader(f"Live Chart: {st.session_state['active_chart']}")
+    
+    # --- UPDATED ASSET MAP FOR CHARTS TAB ---
     asset_map = {
-        "Bitcoin (BTC/USD)": "COINBASE:BTCUSD", "Dollar Index (DXY)": "TVC:DXY",
-        "Gold (XAU/USD)": "OANDA:XAUUSD", "Crude Oil (WTI)": "TVC:USOIL",
-        "EUR / USD": "FX:EURUSD", "GBP / USD": "FX:GBPUSD", "USD / JPY": "FX:USDJPY"
+        "Bitcoin (BTC/USD)": "COINBASE:BTCUSD",
+        "Ethereum (ETH/USD)": "COINBASE:ETHUSD",
+        "Ripple (XRP/USD)": "COINBASE:XRPUSD",
+        "Gold (XAU/USD)": "OANDA:XAUUSD",
+        "Crude Oil (WTI)": "TVC:USOIL",
+        "Dollar Index (DXY)": "TVC:DXY",
+        "EUR / USD": "FX:EURUSD",
+        "GBP / USD": "FX:GBPUSD",
+        "USD / JPY": "FX:USDJPY",
+        "USD / CHF": "FX:USDCHF",
+        "AUD / USD": "FX:AUDUSD",
+        "USD / CAD": "FX:USDCAD",
+        "NZD / USD": "FX:NZDUSD",
     }
     
     # Auto-select the active chart in dropdown
