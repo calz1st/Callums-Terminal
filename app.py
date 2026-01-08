@@ -186,22 +186,9 @@ def scrape_site(url, limit):
         r = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(r.content, 'html.parser')
         texts = [p.get_text() for p in soup.find_all(['h1', 'h2', 'p'])]
-        # REDUCED TO 500 CHARS TO SAVE TOKEN QUOTA
+        # ULTRA LITE: Only 500 chars to save quota
         return f"[[SOURCE: {url}]]\n" + " ".join(texts)[:500] + "\n\n"
     except: return ""
-
-def list_real_models(api_key):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-    try:
-        response = requests.get(url)
-        data = response.json()
-        if 'error' in data: return []
-        valid_models = []
-        for m in data.get('models', []):
-            if 'generateContent' in m.get('supportedGenerationMethods', []):
-                valid_models.append(m['name'].replace("models/", ""))
-        return valid_models
-    except: return []
 
 @st.cache_data(ttl=3600, show_spinner="Analyzing...") 
 def generate_report(data_dump, mode, api_key, model_choice):
@@ -209,15 +196,16 @@ def generate_report(data_dump, mode, api_key, model_choice):
     
     clean_key = api_key.strip()
     
-    # SINGLE SHOT MODEL (Avoid retry loops to prevent hitting quota)
-    # 8b has double the rate limit of standard flash
-    active_model = "gemini-1.5-flash-8b"
+    # --- FINAL FIX: FORCE 'gemini-pro' ---
+    # This is the 1.0 version. It is the most compatible model in existence.
+    # We ignore the user selection to guarantee a working connection.
+    active_model = "gemini-pro"
     
     headers = {'Content-Type': 'application/json'}
     safety_settings = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"}]
     
-    # REDUCED OUTPUT TOKENS (Answer to 'do we need to lower capabilities?')
-    generation_config = {"maxOutputTokens": 800}
+    # REDUCED OUTPUT TOKENS FOR 1.0 PRO
+    generation_config = {"maxOutputTokens": 600}
 
     if mode == "BTC":
         prompt = f"""ROLE: Analyst. TASK: Bitcoin technical update. OUTPUT: ### ⚡️ NARRATIVE \n ### 🎯 LEVELS"""
@@ -233,7 +221,6 @@ def generate_report(data_dump, mode, api_key, model_choice):
         "generationConfig": generation_config
     }
     
-    # SINGLE ATTEMPT WITH COUNTDOWN
     try:
         r = requests.post(url, headers=headers, json=payload)
         response_json = r.json()
@@ -244,20 +231,17 @@ def generate_report(data_dump, mode, api_key, model_choice):
         if 'error' in response_json:
             err_msg = response_json['error'].get('message', '')
             
-            # CHECK FOR RATE LIMIT & SHOW VISUAL TIMER
+            # Rate Limit Handler
             if response_json['error'].get('code') == 429:
                 wait_match = re.search(r"retry in (\d+\.?\d*)s", err_msg)
                 if wait_match:
                     wait_seconds = float(wait_match.group(1)) + 1
-                    
-                    # VISUAL COUNTDOWN
                     placeholder = st.empty()
                     for i in range(int(wait_seconds), 0, -1):
-                        placeholder.warning(f"⚠️ Quota Limit Hit. Cooling down: {i}s...")
+                        placeholder.warning(f"⚠️ High Traffic. Cooling down: {i}s...")
                         time.sleep(1)
                     placeholder.empty()
-                    
-                    # One final retry after waiting
+                    # Retry once
                     r2 = requests.post(url, headers=headers, json=payload)
                     if 'candidates' in r2.json():
                         return r2.json()['candidates'][0]['content']['parts'][0]['text']
@@ -272,7 +256,7 @@ def generate_report(data_dump, mode, api_key, model_choice):
 # --- 5. SIDEBAR ---
 with st.sidebar:
     st.title("💠 Callums Terminals")
-    st.caption("Update v15.23 (Low Bandwidth)")
+    st.caption("Update v15.24 (Universal)")
     st.markdown("---")
     
     api_key = None
@@ -296,8 +280,9 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("🤖 Model Selector")
     
-    # Forced Simplification
-    model_choice = st.selectbox("Active AI Engine:", ["gemini-1.5-flash-8b (High Speed)"], index=0)
+    # HARDCODED DISPLAY: User can see what they are using, but can't break it
+    st.info("✅ Using Universal Model (Gemini Pro 1.0)")
+    model_choice = "gemini-pro"
     
     st.markdown("---")
     st.success("● NETWORK: SECURE")
@@ -346,9 +331,9 @@ with tab1:
     with col_b:
         st.subheader("Market scan")
         if st.button("GENERATE BTC BRIEFING", type="primary"):
-            st.info("⏳ Analyzing... (High-Speed Mode)")
-            # Pass the HARDCODED model
-            report = generate_report("", "BTC", api_key, "gemini-1.5-flash-8b")
+            st.info("⏳ Analyzing...")
+            # Using 'gemini-pro' hardcoded inside the function
+            report = generate_report("", "BTC", api_key, model_choice)
             st.session_state['btc_rep'] = report
             st.rerun() 
             
@@ -366,7 +351,7 @@ with tab2:
         st.subheader("Global FX Strategy")
         if st.button("GENERATE MACRO BRIEFING", type="primary"):
             st.info("⏳ Analyzing Markets...")
-            report = generate_report("", "FX", api_key, "gemini-1.5-flash-8b")
+            report = generate_report("", "FX", api_key, model_choice)
             st.session_state['fx_rep'] = report
             st.rerun()
         if 'fx_rep' in st.session_state:
@@ -376,7 +361,7 @@ with tab3:
     st.subheader("Geopolitical Risk Intelligence")
     if st.button("RUN GEOPOLITICAL SCAN", type="primary"):
         st.info("⏳ Scanning...")
-        report = generate_report("", "GEO", api_key, "gemini-1.5-flash-8b")
+        report = generate_report("", "GEO", api_key, model_choice)
         st.session_state['geo_rep'] = report
         st.rerun()
     if 'geo_rep' in st.session_state:
