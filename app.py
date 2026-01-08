@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(
-    page_title="QUANTUM | Hedge Fund Terminal",
+    page_title="Callums Terminal",
     page_icon="💠",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -256,7 +256,7 @@ with st.sidebar:
     try:
         if "GOOGLE_API_KEY" in st.secrets:
             api_key = st.secrets["GOOGLE_API_KEY"].strip()
-            st.success("🔑 Key Loaded")
+            st.success("🔑 Key Loaded securley")
         else:
             api_key = st.text_input("Use API Key", type="password")
     except:
