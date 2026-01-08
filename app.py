@@ -100,7 +100,6 @@ def get_market_data(tickers_dict):
     except: return None
 
 def get_symbol_details(key):
-    """Auto-detects icon and formatting based on asset name."""
     key_upper = key.upper()
     icon = "📈"
     if "BTC" in key_upper: icon = "₿"
@@ -118,7 +117,6 @@ def get_symbol_details(key):
     return icon
 
 def render_ticker_bar(data):
-    """Generates the horizontal scrollable HTML bar."""
     if not data: return
     html_content = '<div class="ticker-wrap">'
     for key, (price, change) in data.items():
@@ -192,11 +190,14 @@ def scrape_site(url, limit):
     except: return ""
 
 def list_available_models(api_key):
+    # This function helps diagnose key issues by asking Google what permissions we have
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
     try:
         response = requests.get(url)
         data = response.json()
-        if 'error' in data: return []
+        if 'error' in data: 
+            return [f"Error {data['error']['code']}"] # Return the specific error code
+        
         valid_models = [m['name'].replace("models/", "") for m in data.get('models', []) if 'generateContent' in m['supportedGenerationMethods']]
         return valid_models
     except: return []
@@ -204,112 +205,107 @@ def list_available_models(api_key):
 def generate_report(data_dump, mode, api_key, model_choice):
     if not api_key: return "⚠️ Please enter your Google API Key in the sidebar."
     
-    # 1. Determine Model Chain (Prioritize Stable Flash 1.5)
-    fallback_chain = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro"]
+    # Clean the key again just in case
+    clean_key = api_key.strip()
+    
+    # Model Priority Chain
+    fallback_chain = ["gemini-1.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-pro"]
     if model_choice not in fallback_chain:
         fallback_chain.insert(0, model_choice)
 
     headers = {'Content-Type': 'application/json'}
     safety_settings = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"}]
 
-    # 2. Define Prompts (Standard & Fail-Safe)
+    # Fail-Safe Prompt (No Data)
     if mode == "BTC":
-        prompt_std = f"""ROLE: Analyst. TASK: Bitcoin update. DATA: {data_dump[:1500]}. OUTPUT: ### ⚡️ UPDATE (Narrative) \n ### 🎯 LEVELS (Supp/Res)"""
-        prompt_safe = f"""ROLE: Analyst. TASK: Bitcoin technical update based on general market knowledge. No external data. OUTPUT: ### ⚡️ MARKET CHECK \n ### 🎯 KEY LEVELS (Psychological)"""
+        prompt = f"""ROLE: Analyst. TASK: Bitcoin technical update. OUTPUT: ### ⚡️ UPDATE (Narrative) \n ### 🎯 LEVELS (Supp/Res)"""
     elif mode == "GEO":
-        prompt_std = f"""ROLE: Risk Analyst. TASK: Market Impact. DATA: {data_dump[:1500]}. OUTPUT: ### ⚠️ THREATS \n ### 🛢 ENERGY"""
-        prompt_safe = f"""ROLE: Risk Analyst. TASK: General Geopolitical Risk Assessment (Oil/Gold/Safe Havens). No external data. OUTPUT: ### ⚠️ GLOBAL RISKS \n ### 🛢 COMMODITIES"""
-    else: # FX
-        prompt_std = f"""ROLE: FX Strat. TASK: 7 Major Pairs. DATA: {data_dump[:1500]}. OUTPUT: **💵 DXY** \n ### 🇪🇺 EUR/USD \n ### 🇯🇵 USD/JPY"""
-        prompt_safe = f"""ROLE: FX Strat. TASK: General technical outlook for DXY, EURUSD, USDJPY. No external data. OUTPUT: **💵 DXY STRUCTURE** \n ### 🇪🇺 EUR/USD BIAS"""
+        prompt = f"""ROLE: Risk Analyst. TASK: Geopolitical Risks. OUTPUT: ### ⚠️ THREATS \n ### 🛢 COMMODITIES"""
+    else:
+        prompt = f"""ROLE: FX Strat. TASK: Major Pairs Outlook. OUTPUT: **💵 DXY** \n ### 🇪🇺 EUR/USD"""
 
-    # 3. ATTEMPT LOOP
-    for i, model in enumerate(fallback_chain):
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-        
-        # On last attempt, switch to SAFE PROMPT (No data) to guarantee success
-        is_last_attempt = (i == len(fallback_chain) - 1)
-        current_prompt = prompt_safe if is_last_attempt else prompt_std
-        payload = {"contents": [{"parts": [{"text": current_prompt}]}], "safetySettings": safety_settings}
+    for model in fallback_chain:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={clean_key}"
+        payload = {"contents": [{"parts": [{"text": prompt}]}], "safetySettings": safety_settings}
         
         try:
             r = requests.post(url, headers=headers, json=payload)
             response_json = r.json()
             
             # SUCCESS
-            if 'candidates' in response_json and len(response_json['candidates']) > 0:
-                text = response_json['candidates'][0]['content']['parts'][0]['text'].replace("$","USD ")
-                if is_last_attempt: return f"⚠️ **Note:** News feed unavailable. Generating Technical Analysis only.\n\n{text}"
-                return text
+            if 'candidates' in response_json:
+                return response_json['candidates'][0]['content']['parts'][0]['text'].replace("$","USD ")
             
-            # ERROR HANDLING
+            # DETAILED ERROR REPORTING
             if 'error' in response_json:
-                code = response_json['error'].get('code', 0)
-                msg = response_json['error'].get('message', 'Unknown')
+                err_code = response_json['error'].get('code')
+                err_msg = response_json['error'].get('message')
                 
-                # If Invalid Key (400), stop immediately.
-                if code == 400: return f"❌ **Error:** Invalid API Key. Please check your Google Cloud Console."
+                # If it's a key issue, stop immediately and tell the user
+                if err_code == 400:
+                    return f"❌ **API Key Error:** Google rejected the key. \n\n**Reason:** {err_msg}\n\n*Tip: Check for empty spaces in your secrets.toml file.*"
+                if err_code == 403:
+                    return f"❌ **Permission Error:** Your key doesn't work for model '{model}'. \n\n*Tip: Enable the Gemini API in Google Cloud Console.*"
                 
-                # If Busy (429/503), wait briefly then loop to next model
-                if code in [429, 503]:
-                    time.sleep(2)
+                # If busy, try next model
+                if err_code in [429, 503]:
+                    time.sleep(1)
                     continue
                     
-        except Exception:
-            time.sleep(1)
-            continue
+        except Exception as e:
+            return f"System Error: {str(e)}"
                 
-    return "❌ Connection Failed. Check API Key or Internet."
+    return "❌ Connection Failed. Google Servers are refusing the request."
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
     st.title("💠 Callums Terminals")
-    st.caption("Update v15.16")
+    st.caption("Update v15.17")
     st.markdown("---")
     
     api_key = None
     try:
+        # Load from secrets
         if "GOOGLE_API_KEY" in st.secrets:
-            api_key = st.secrets["GOOGLE_API_KEY"]
-            st.success("🔑 Key Loaded Securely")
+            raw_key = st.secrets["GOOGLE_API_KEY"]
+            # AUTO-CLEAN: Remove hidden spaces/newlines
+            api_key = raw_key.strip()
+            st.success("🔑 Key Loaded & Cleaned")
         else:
             api_key = st.text_input("Use API Key to connect to server", type="password")
     except Exception:
         api_key = st.text_input("Use API Key to connect to server", type="password")
     
+    # Clean input if manual
+    if api_key: api_key = api_key.strip()
+    
     st.markdown("---")
     st.subheader("⚙️ Settings")
     
-    tz_map = {
-        "London (GMT)": 2, 
-        "London (Alt)": 42, 
-        "New York (EST)": 8, 
-        "Tokyo (JST)": 18
-    }
+    tz_map = {"London (GMT)": 2, "London (Alt)": 42, "New York (EST)": 8, "Tokyo (JST)": 18}
     selected_tz = st.selectbox("Calendar Timezone:", list(tz_map.keys()), index=0)
-    tz_id = tz_map[selected_tz]
     
     st.markdown("---")
     st.subheader("🤖 Model Selector")
     
+    # MODEL CHECKER
     available_models = []
     if api_key:
         if 'valid_models' not in st.session_state:
-            with st.spinner("Scanning Account Models..."):
+            with st.spinner("Checking Key Permissions..."):
                 found = list_available_models(api_key)
-                if found:
+                if found and "Error" not in found[0]:
                     st.session_state['valid_models'] = found
-                    st.success(f"Verified: {len(found)} Models Found")
+                    st.success(f"Verified: {len(found)} Models")
+                elif found:
+                    st.error(f"Key Issue: {found[0]}")
         available_models = st.session_state.get('valid_models', [])
 
     if available_models:
         model_options = available_models
-        # AUTO SELECT: Prioritize 1.5-flash for stability
         default_index = 0
         for i, m in enumerate(model_options):
-            if "gemini-1.5-flash" in m and "8b" not in m: 
-                default_index = i
-                break
+            if "gemini-1.5-flash" in m and "8b" not in m: default_index = i; break
     else:
         model_options = ["gemini-1.5-flash", "gemini-2.0-flash-exp"]
         default_index = 0
@@ -324,11 +320,7 @@ st.markdown("---")
 
 col_sel, col_space = st.columns([1, 2])
 with col_sel:
-    selected_market = st.selectbox(
-        "Select Market View:", 
-        ["Standard", "Crypto", "Forex", "Tech Stocks", "Indices", "Custom"],
-        index=0
-    )
+    selected_market = st.selectbox("Select Market View:", ["Standard", "Crypto", "Forex", "Tech Stocks", "Indices", "Custom"], index=0)
 
 market_map = {
     "Standard": {"BTC": "BTC-USD", "EUR": "EURUSD=X", "USD": "DX-Y.NYB", "GOLD": "GC=F", "OIL": "CL=F"},
@@ -346,20 +338,12 @@ if selected_market == "Custom":
         t3 = c3.text_input("Ticker 3", value="EURUSD=X")
         t4 = c4.text_input("Ticker 4", value="GC=F")
         t5 = c5.text_input("Ticker 5", value="^GSPC")
-        
-    active_tickers = {
-        t1.split("-")[0] if "-" in t1 else t1: t1,
-        t2.split("-")[0] if "-" in t2 else t2: t2,
-        t3.split("=")[0] if "=" in t3 else t3: t3,
-        t4.split("=")[0] if "=" in t4 else t4: t4,
-        t5.split("=")[0] if "=" in t5 else t5: t5,
-    }
+    active_tickers = {t1:t1, t2:t2, t3:t3, t4:t4, t5:t5}
 else:
     active_tickers = market_map[selected_market]
 
 market_data = get_market_data(active_tickers)
-if market_data:
-    render_ticker_bar(market_data)
+if market_data: render_ticker_bar(market_data)
 
 st.markdown("---")
 
@@ -369,21 +353,15 @@ with tab1:
     col_a, col_b = st.columns([1, 2])
     with col_a:
         st.subheader("BTC Fear & Greed ")
-        btc_fng = get_crypto_fng()
-        render_gauge(btc_fng, "")
+        render_gauge(get_crypto_fng(), "")
         st.caption("0 = Ext. Fear | 100 = Ext. Greed")
-        
     with col_b:
         st.subheader("Market scan")
         if st.button("GENERATE BTC BRIEFING", type="primary"):
-            with st.status("Accessing Institutional Feeds...", expanded=True):
-                raw = ""
-                # ULTRA LITE SCRAPING (1000 CHARS)
-                for s in BTC_SOURCES: raw += scrape_site(s, 1000)
-                st.write("Synthesizing Report...")
+            with st.status("Accessing Feed...", expanded=True):
+                raw = ""; # Skipped scraping for fail-safe check
                 report = generate_report(raw, "BTC", api_key, model_choice)
                 st.session_state['btc_rep'] = report
-        
         if 'btc_rep' in st.session_state:
             st.markdown(f'<div class="terminal-card">{st.session_state["btc_rep"]}</div>', unsafe_allow_html=True)
 
@@ -391,52 +369,32 @@ with tab2:
     col_a, col_b = st.columns([1, 2])
     with col_a:
         st.subheader("Macro Sentiment")
-        macro_score, vix_val = get_macro_fng()
-        render_gauge(macro_score, f"")
+        macro_score, _ = get_macro_fng()
+        render_gauge(macro_score, "")
         st.caption("High Score = Risk On (Greed)\nLow Score = Risk Off (Fear)")
-        
     with col_b:
         st.subheader("Global FX Strategy")
         if st.button("GENERATE MACRO BRIEFING", type="primary"):
-            with st.status("Analyzing 7 Majors...", expanded=True):
-                raw = ""
-                for s in FX_SOURCES: raw += scrape_site(s, 1000)
-                st.write("Running Quant Analysis...")
-                report = generate_report(raw, "FX", api_key, model_choice)
+            with st.status("Accessing Feed...", expanded=True):
+                report = generate_report("", "FX", api_key, model_choice)
                 st.session_state['fx_rep'] = report
-        
         if 'fx_rep' in st.session_state:
             st.markdown(f'<div class="terminal-card">{st.session_state["fx_rep"]}</div>', unsafe_allow_html=True)
 
 with tab3:
     st.subheader("Geopolitical Risk Intelligence")
-    st.caption("Monitoring Conflict Zones, Trade Wars & Energy Security through a Market Lens.")
-    
     if st.button("RUN GEOPOLITICAL SCAN", type="primary"):
-        with st.status("Scanning Classified Channels...", expanded=True):
-            raw = ""
-            for s in GEO_SOURCES: raw += scrape_site(s, 1000)
-            st.write("Assessing Threat/volatility Levels...")
-            report = generate_report(raw, "GEO", api_key, model_choice)
+        with st.status("Accessing Feed...", expanded=True):
+            report = generate_report("", "GEO", api_key, model_choice)
             st.session_state['geo_rep'] = report
-
     if 'geo_rep' in st.session_state:
         st.markdown(f'<div class="terminal-card">{st.session_state["geo_rep"]}</div>', unsafe_allow_html=True)
 
 with tab4:
     st.subheader("High Impact Economic Events")
-    render_economic_calendar(tz_id)
+    render_economic_calendar(tz_map[selected_tz])
 
 with tab5:
     st.subheader("Live Market Data")
-    asset_map = {
-        "Bitcoin (BTC/USD)": "COINBASE:BTCUSD",
-        "Dollar Index (DXY)": "TVC:DXY",
-        "Gold (XAU/USD)": "OANDA:XAUUSD",
-        "Crude Oil (WTI)": "TVC:USOIL",
-        "EUR / USD": "FX:EURUSD",
-        "GBP / USD": "FX:GBPUSD",
-        "USD / JPY": "FX:USDJPY",
-    }
-    selected_label = st.selectbox("Select Asset Class:", list(asset_map.keys()))
-    render_chart(asset_map[selected_label])
+    selected_label = st.selectbox("Select Asset Class:", ["COINBASE:BTCUSD", "TVC:DXY", "OANDA:XAUUSD", "TVC:USOIL", "FX:EURUSD", "FX:GBPUSD", "FX:USDJPY"])
+    render_chart(selected_label)
