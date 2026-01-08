@@ -187,7 +187,6 @@ def scrape_site(url, limit):
         headers = {'User-Agent': 'Mozilla/5.0'}
         r = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(r.content, 'html.parser')
-        # SUPER LITE MODE: Only 800 chars per site
         texts = [p.get_text() for p in soup.find_all(['h1', 'h2', 'p'])]
         return f"[[SOURCE: {url}]]\n" + " ".join(texts)[:limit] + "\n\n"
     except: return ""
@@ -205,114 +204,67 @@ def list_available_models(api_key):
 def generate_report(data_dump, mode, api_key, model_choice):
     if not api_key: return "⚠️ Please enter your Google API Key in the sidebar."
     
-    # SAFETY DELAY
-    time.sleep(3)
-    
-    # ULTRA LITE CONTEXT (Only 2000 chars total)
-    safe_data = data_dump[:2000]
-    
-    # --- CRITICAL FIX: FORCE 1.5 FLASH FIRST ---
-    # We prioritize 1.5-flash because it is STABLE and has higher rate limits.
-    fallback_chain = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-2.0-flash-exp"]
-    
-    # If user selected a specific model, try that first, but fallback to 1.5
+    # 1. Determine Model Chain (Prioritize Stable Flash 1.5)
+    fallback_chain = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro"]
     if model_choice not in fallback_chain:
         fallback_chain.insert(0, model_choice)
 
     headers = {'Content-Type': 'application/json'}
     safety_settings = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"}]
 
+    # 2. Define Prompts (Standard & Fail-Safe)
     if mode == "BTC":
-        prompt_text = f"""
-        ROLE: Analyst.
-        TASK: Brief Bitcoin update.
-        DATA: {safe_data}
-        OUTPUT:
-        ### ⚡️ SUMMARY
-        (Price/Narrative)
-        ### 🐋 SENTIMENT
-        (Flows/Greed)
-        ### 🧱 LEVELS
-        (Supp/Res)
-        ### 🎯 PLAN
-        (Bull/Bear)
-        """
+        prompt_std = f"""ROLE: Analyst. TASK: Bitcoin update. DATA: {data_dump[:1500]}. OUTPUT: ### ⚡️ UPDATE (Narrative) \n ### 🎯 LEVELS (Supp/Res)"""
+        prompt_safe = f"""ROLE: Analyst. TASK: Bitcoin technical update based on general market knowledge. No external data. OUTPUT: ### ⚡️ MARKET CHECK \n ### 🎯 KEY LEVELS (Psychological)"""
     elif mode == "GEO":
-        prompt_text = f"""
-        ROLE: Risk Analyst.
-        TASK: Market Impact.
-        DATA: {safe_data}
-        OUTPUT:
-        ### ⚠️ THREATS
-        (Status)
-        ---
-        ### 🛢 ENERGY
-        (Oil/Gold)
-        ---
-        ### 🛡 DEFENSE
-        (Conflicts)
-        ---
-        ### 💵 FX
-        (Safe Havens)
-        """
+        prompt_std = f"""ROLE: Risk Analyst. TASK: Market Impact. DATA: {data_dump[:1500]}. OUTPUT: ### ⚠️ THREATS \n ### 🛢 ENERGY"""
+        prompt_safe = f"""ROLE: Risk Analyst. TASK: General Geopolitical Risk Assessment (Oil/Gold/Safe Havens). No external data. OUTPUT: ### ⚠️ GLOBAL RISKS \n ### 🛢 COMMODITIES"""
     else: # FX
-        prompt_text = f"""
-        ROLE: FX Strat.
-        TASK: 7 Major Pairs Outlook.
-        DATA: {safe_data}
-        OUTPUT (Use \\n\\n before headers):
-        **💵 DXY**
-        (Brief)
-        ---
-        ### 🇪🇺 EUR/USD
-        (Bias)
-        ---
-        ### 🇬🇧 GBP/USD
-        (Bias)
-        ---
-        ### 🇯🇵 USD/JPY
-        (Bias)
-        ---
-        ### 🇨🇭 USD/CHF
-        (Bias)
-        ---
-        ### 🇦🇺 AUD/USD
-        (Bias)
-        ---
-        ### 🇨🇦 USD/CAD
-        (Bias)
-        ---
-        ### 🇳🇿 NZD/USD
-        (Bias)
-        """
+        prompt_std = f"""ROLE: FX Strat. TASK: 7 Major Pairs. DATA: {data_dump[:1500]}. OUTPUT: **💵 DXY** \n ### 🇪🇺 EUR/USD \n ### 🇯🇵 USD/JPY"""
+        prompt_safe = f"""ROLE: FX Strat. TASK: General technical outlook for DXY, EURUSD, USDJPY. No external data. OUTPUT: **💵 DXY STRUCTURE** \n ### 🇪🇺 EUR/USD BIAS"""
 
-    payload = {"contents": [{"parts": [{"text": prompt_text}]}], "safetySettings": safety_settings}
-
-    for model in fallback_chain:
+    # 3. ATTEMPT LOOP
+    for i, model in enumerate(fallback_chain):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-        wait_times = [5, 10] 
-        for wait in wait_times:
-            try:
-                r = requests.post(url, headers=headers, json=payload)
-                response_json = r.json()
-                if 'candidates' in response_json and len(response_json['candidates']) > 0:
-                    return response_json['candidates'][0]['content']['parts'][0]['text'].replace("$","USD ")
-                if 'error' in response_json:
-                    code = response_json['error'].get('code', 0)
-                    # If overloaded, wait and try next model
-                    if code in [429, 503]:
-                        time.sleep(wait)
-                        continue
-                    if code == 404: break 
-            except Exception:
-                time.sleep(1); continue
+        
+        # On last attempt, switch to SAFE PROMPT (No data) to guarantee success
+        is_last_attempt = (i == len(fallback_chain) - 1)
+        current_prompt = prompt_safe if is_last_attempt else prompt_std
+        payload = {"contents": [{"parts": [{"text": current_prompt}]}], "safetySettings": safety_settings}
+        
+        try:
+            r = requests.post(url, headers=headers, json=payload)
+            response_json = r.json()
+            
+            # SUCCESS
+            if 'candidates' in response_json and len(response_json['candidates']) > 0:
+                text = response_json['candidates'][0]['content']['parts'][0]['text'].replace("$","USD ")
+                if is_last_attempt: return f"⚠️ **Note:** News feed unavailable. Generating Technical Analysis only.\n\n{text}"
+                return text
+            
+            # ERROR HANDLING
+            if 'error' in response_json:
+                code = response_json['error'].get('code', 0)
+                msg = response_json['error'].get('message', 'Unknown')
                 
-    return "⚠️ System Overloaded. Try again in 1 minute."
+                # If Invalid Key (400), stop immediately.
+                if code == 400: return f"❌ **Error:** Invalid API Key. Please check your Google Cloud Console."
+                
+                # If Busy (429/503), wait briefly then loop to next model
+                if code in [429, 503]:
+                    time.sleep(2)
+                    continue
+                    
+        except Exception:
+            time.sleep(1)
+            continue
+                
+    return "❌ Connection Failed. Check API Key or Internet."
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
     st.title("💠 Callums Terminals")
-    st.caption("Update v15.15")
+    st.caption("Update v15.16")
     st.markdown("---")
     
     api_key = None
@@ -426,8 +378,8 @@ with tab1:
         if st.button("GENERATE BTC BRIEFING", type="primary"):
             with st.status("Accessing Institutional Feeds...", expanded=True):
                 raw = ""
-                # ULTRA LITE SCRAPING (800 CHARS)
-                for s in BTC_SOURCES: raw += scrape_site(s, 800)
+                # ULTRA LITE SCRAPING (1000 CHARS)
+                for s in BTC_SOURCES: raw += scrape_site(s, 1000)
                 st.write("Synthesizing Report...")
                 report = generate_report(raw, "BTC", api_key, model_choice)
                 st.session_state['btc_rep'] = report
@@ -448,7 +400,7 @@ with tab2:
         if st.button("GENERATE MACRO BRIEFING", type="primary"):
             with st.status("Analyzing 7 Majors...", expanded=True):
                 raw = ""
-                for s in FX_SOURCES: raw += scrape_site(s, 800)
+                for s in FX_SOURCES: raw += scrape_site(s, 1000)
                 st.write("Running Quant Analysis...")
                 report = generate_report(raw, "FX", api_key, model_choice)
                 st.session_state['fx_rep'] = report
@@ -463,7 +415,7 @@ with tab3:
     if st.button("RUN GEOPOLITICAL SCAN", type="primary"):
         with st.status("Scanning Classified Channels...", expanded=True):
             raw = ""
-            for s in GEO_SOURCES: raw += scrape_site(s, 800)
+            for s in GEO_SOURCES: raw += scrape_site(s, 1000)
             st.write("Assessing Threat/volatility Levels...")
             report = generate_report(raw, "GEO", api_key, model_choice)
             st.session_state['geo_rep'] = report
