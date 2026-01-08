@@ -184,44 +184,40 @@ def render_economic_calendar(timezone_id):
     components.html(html, height=800)
 
 # --- 4. DATA SOURCES & AI ---
-# UPDATED SOURCES TO AVOID "ACCESS DENIED"
-BTC_SOURCES = ["https://cointelegraph.com/tags/bitcoin", "https://u.today/bitcoin-news"]
-FX_SOURCES = ["https://www.investing.com/news/forex-news", "https://www.cnbc.com/currencies/"]
-GEO_SOURCES = ["https://oilprice.com/Geopolitics", "https://www.cnbc.com/world/?region=world"]
 
 @st.cache_data(ttl=600) 
-def scrape_site(url, limit):
+def get_latest_news(symbol):
+    """
+    Fetches REAL-TIME news from Yahoo Finance API.
+    Replaces the broken web scraper.
+    """
     try:
-        # STEALTH MODE: Act like a real Chrome Browser
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://www.google.com/'
-        }
-        r = requests.get(url, headers=headers, timeout=8)
+        ticker = yf.Ticker(symbol)
+        news_list = ticker.news
         
-        if r.status_code != 200:
-            return "" # Silently fail if blocked (Don't show error to user)
+        if not news_list:
+            return "No recent news found."
             
-        soup = BeautifulSoup(r.content, 'html.parser')
-        texts = [p.get_text() for p in soup.find_all(['h1', 'h2', 'p'])]
-        
-        # Clean text
-        raw_text = " ".join(texts)
-        raw_text = re.sub(r'\s+', ' ', raw_text).strip()
-        
-        return f"[[SOURCE: {url}]]\n" + raw_text[:1200] + "\n\n"
-    except: 
-        return ""
+        formatted_news = ""
+        count = 0
+        for item in news_list:
+            if count >= 5: break # Limit to top 5 stories
+            title = item.get('title', 'No Title')
+            publisher = item.get('publisher', 'Unknown')
+            # Extract basic text
+            formatted_news += f"- {title} (Source: {publisher})\n"
+            count += 1
+            
+        return formatted_news
+    except Exception:
+        return "News feed currently unavailable."
 
 def resolve_best_model(api_key):
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
     try:
         response = requests.get(url)
         data = response.json()
-        
         if 'error' in data: return None, data['error']['message']
-        
         valid_models = []
         for m in data.get('models', []):
             if 'generateContent' in m.get('supportedGenerationMethods', []):
@@ -231,10 +227,8 @@ def resolve_best_model(api_key):
         preferred_order = ["gemini-1.5-flash", "gemini-1.0-pro", "gemini-pro"]
         for pref in preferred_order:
             if pref in valid_models: return pref, "OK"
-        
         if valid_models: return valid_models[0], "OK"
         return None, "No valid models found."
-        
     except Exception as e: return None, str(e)
 
 @st.cache_data(ttl=3600, show_spinner="Analyzing...") 
@@ -248,79 +242,56 @@ def generate_report(data_dump, mode, api_key):
     
     headers = {'Content-Type': 'application/json'}
     safety_settings = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"}]
-    
     generation_config = {"maxOutputTokens": 2500}
 
-    # DEEP DIVE PROMPTS
+    # --- UPDATED PROMPTS FOR "LIVE-LINK" MODE ---
     if mode == "BTC":
         prompt = f"""
-        ROLE: Senior Institutional Crypto Strategist.
-        TASK: Produce a highly detailed, multi-paragraph research note on Bitcoin using LIVE DATA.
-        LIVE DATA: {data_dump}
-        
-        REQUIREMENTS:
-        - Use professional financial terminology.
-        - Analyze specific price levels mentioned in the news.
+        ROLE: Institutional Crypto Strategist.
+        TASK: Write a comprehensive Bitcoin briefing using the LIVE NEWS below.
+        LIVE NEWS FEED: 
+        {data_dump}
         
         OUTPUT FORMAT (Markdown):
-        ### 📊 TECHNICAL DEEP DIVE
-        (Analyze the Daily & Weekly Market Structure. Discuss EMAs, RSI divergence, and Volume profiles.)
-        
-        ### 🐋 ON-CHAIN & FUNDAMENTAL FLOWS
-        (Discuss ETF inflows/outflows, Miner behavior, and Whale wallet activity derived from news.)
-        
-        ### 🌍 MACRO CORRELATIONS
-        (Correlate BTC PA with DXY, S&P 500, and Global Liquidity cycles.)
-        
-        ### 🎯 STRATEGIC TRADE PLAN
-        - **Bull Case:** (Condition + Target)
-        - **Bear Case:** (Condition + Target)
-        - **Invalidation Level:** (Specific Price)
+        ### ⚡️ LIVE MARKET PULSE
+        (Synthesize the news headlines above into a narrative. Is the mood Bullish or Bearish right now?)
+        ### 🏦 INSTITUTIONAL FLOWS
+        (Analyze any ETF or Institutional mentions in the news.)
+        ### 🔮 SCENARIO PLANNING
+        (Bull/Bear Levels based on this news)
         """
     elif mode == "GEO":
         prompt = f"""
         ROLE: Geopolitical Risk Strategist.
-        TASK: Comprehensive threat assessment report based on LIVE DATA.
-        LIVE DATA: {data_dump}
+        TASK: Analyze global threats using the LIVE NEWS provided.
+        LIVE NEWS FEED: 
+        {data_dump}
         
         OUTPUT FORMAT (Markdown):
-        ### 🚨 GLOBAL THREAT MATRIX
-        (Detailed paragraph on the current DEFCON-equivalent status of global markets.)
-        
-        ### ⚔️ REGIONAL FLASHPOINTS (DETAILED)
-        (Deep dive into Middle East, Europe, or Asia tensions. Specific military/political moves.)
-        
-        ### 🛢 COMMODITY & SUPPLY CHAIN IMPACT
-        (How these tensions specifically affect Brent Crude, Gold, and Shipping Lanes.)
-        
-        ### 🛡 INVESTMENT IMPLICATIONS
-        (Actionable advice for risk-on vs risk-off asset allocation.)
+        ### 🌍 THREAT MATRIX
+        (Synthesize the news headlines into a threat assessment.)
+        ### ⚔️ FLASHPOINTS
+        (Specific conflicts mentioned in the feed.)
+        ### 🛡 MARKET IMPACT
+        (How this news affects Gold, Oil, and Safe Havens.)
         """
     else: # FX
         prompt = f"""
-        ROLE: Head of FX Strategy.
-        TASK: Detailed breakdown of the 7 Major Pairs using LIVE DATA.
-        LIVE DATA: {data_dump}
+        ROLE: Lead FX Strategist.
+        TASK: Outlook for Major Currencies using LIVE NEWS.
+        LIVE NEWS FEED: 
+        {data_dump}
         
         OUTPUT FORMAT (Markdown):
-        **💵 US DOLLAR INDEX (DXY) MACRO THESIS**
-        (Analyze Yield Curve Control, Fed Policy expectations, and DXY technicals.)
-        
+        **💵 DXY (DOLLAR INDEX)**
+        (Analyze USD sentiment based on the news feed.)
         ---
-        ### 🇪🇺 EUR/USD
-        * **Structure:** (Bullish/Bearish Market Structure)
-        * **Driver:** (ECB vs Fed divergence)
-        * **Key Levels:** (Support/Resistance)
-        
-        ### 🇬🇧 GBP/USD
-        * **Structure:** (Trend Analysis)
-        * **Driver:** (BoE Policy/UK Inflation)
-        
+        ### 🇪🇺 EUR/USD & 🇬🇧 GBP/USD
+        (Synthesize news for Europe/UK.)
         ### 🇯🇵 USD/JPY
-        * **Structure:** (YCC & Intervention Risks)
-        * **Driver:** (Carry Trade dynamics)
-        
-        (Repeat format for CHF, AUD, CAD, NZD with specific commodity correlations where applicable.)
+        (Synthesize news for Japan/Yen.)
+        ### 🌐 COMMODITY CURRENCIES (AUD/CAD)
+        (Synthesize news for Commodity dollars.)
         """
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{active_model}:generateContent?key={clean_key}"
@@ -351,7 +322,7 @@ def generate_report(data_dump, mode, api_key):
 # --- 5. SIDEBAR ---
 with st.sidebar:
     st.title("💠 Callums Terminals")
-    st.caption("Update v15.30 (Stealth Scraper)")
+    st.caption("Update v15.31 (Live-Feed)")
     st.markdown("---")
     
     api_key = None
@@ -430,13 +401,11 @@ with tab1:
     with col_b:
         st.subheader("Market scan")
         if st.button("GENERATE BTC BRIEFING", type="primary"):
-            # RESTORED WEB SCRAPING HERE
             raw_news = ""
-            with st.spinner("Acquiring Live Intel..."):
-                for url in BTC_SOURCES:
-                    raw_news += scrape_site(url, 1200)
+            with st.spinner("Fetching Live Feed..."):
+                raw_news = get_latest_news("BTC-USD")
             
-            st.info("⏳ Negotiating with Google AI...")
+            st.info("⏳ Analyzing Live Data...")
             report = generate_report(raw_news, "BTC", api_key)
             st.session_state['btc_rep'] = report
             st.rerun() 
@@ -454,13 +423,13 @@ with tab2:
     with col_b:
         st.subheader("Global FX Strategy")
         if st.button("GENERATE MACRO BRIEFING", type="primary"):
-            # RESTORED WEB SCRAPING HERE
             raw_news = ""
-            with st.spinner("Acquiring Live Intel..."):
-                for url in FX_SOURCES:
-                    raw_news += scrape_site(url, 1200)
+            with st.spinner("Fetching Live Feed..."):
+                # Fetch news for DXY and Major Pairs
+                raw_news += get_latest_news("DX-Y.NYB") + "\n"
+                raw_news += get_latest_news("EURUSD=X")
             
-            st.info("⏳ Negotiating with Google AI...")
+            st.info("⏳ Analyzing Live Data...")
             report = generate_report(raw_news, "FX", api_key)
             st.session_state['fx_rep'] = report
             st.rerun()
@@ -470,13 +439,13 @@ with tab2:
 with tab3:
     st.subheader("Geopolitical Risk Intelligence")
     if st.button("RUN GEOPOLITICAL SCAN", type="primary"):
-        # RESTORED WEB SCRAPING HERE
         raw_news = ""
-        with st.spinner("Acquiring Live Intel..."):
-            for url in GEO_SOURCES:
-                raw_news += scrape_site(url, 1200)
+        with st.spinner("Fetching Live Feed..."):
+            # Fetch news for Oil and Gold as proxies for Geopolitics
+            raw_news += get_latest_news("CL=F") + "\n"
+            raw_news += get_latest_news("GC=F")
         
-        st.info("⏳ Negotiating with Google AI...")
+        st.info("⏳ Analyzing Live Data...")
         report = generate_report(raw_news, "GEO", api_key)
         st.session_state['geo_rep'] = report
         st.rerun()
